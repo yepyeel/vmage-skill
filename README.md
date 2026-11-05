@@ -20,7 +20,21 @@ npx skills add yepyeel/vmage-skill --skill vmage -a codex claude-code -y
 
 ## 用法（Usage）
 
-在启动 Agent 的环境里设置 `OPENAI_API_KEY`，然后在目标项目开启新会话。使用 1Password 时，可用 `OPENAI_API_KEY='op://你的保险库/OpenAI/credential' op run -- codex` 启动 Codex，启动 Claude Code 时把末尾的 `codex` 换成 `claude`。
+首次使用可以直接在 Agent 中输入：
+
+```text
+帮我初始化 vmage 配置
+```
+
+Agent 会通过交互式提问收集服务、模型和配置范围，自动保存配置。API Key 可通过用户级文件持久保存，也可由环境变量提供（优先）。不需要特定密码管理器，也不要把真实密钥发到聊天里。向导会引导你在自己的终端隐藏输入一次，桌面 Agent 随后即可读取，不需要重启。配置和检查本身不调用生图 API。
+
+已有配置时，在目标项目目录运行以下命令，按提示输入密钥即可持久保存（macOS、Linux、Windows 通用）：
+
+```sh
+node "/实际安装路径/vmage/scripts/setup.mjs" --set-key
+```
+
+密钥以明文保存在用户配置目录的 `credentials.json`，文件访问权限仅限当前用户。环境变量仍然优先；官方接口默认使用 `OPENAI_API_KEY`。路径及权限说明见 [初始化向导](skills/vmage/references/setup.md)。
 
 **在 Codex 中输入**
 
@@ -62,11 +76,12 @@ ln -s "$PWD/skills/vmage" "$HOME/.claude/skills/"
 
 ```sh
 node skills/vmage/scripts/generate.mjs --show-config
+node skills/vmage/scripts/setup.mjs --check
 node skills/vmage/scripts/generate.mjs --prompt "一张咖啡店插画" --out assets/cover.png
 npm test
 ```
 
-第一条命令只检查配置，第二条会向所选服务请求生图。测试使用临时目录和本地模拟网关。
+`--show-config` 显示配置，`--check` 另外检查密钥是否可读取，两者均不联网。带 `--prompt` 的命令会请求生图。测试使用临时目录和本地模拟网关。
 
 ## 目录
 
@@ -75,10 +90,14 @@ skills/vmage/                 两个客户端共用的可安装目录
 ├── SKILL.md                  Agent 的触发说明和调用方式
 ├── scripts/
 │   ├── generate.mjs          命令行入口
+│   ├── setup.mjs             初始化配置、密钥设置与离线检查
+│   ├── credentials.mjs       用户级密钥文件与访问权限
+│   ├── secret-input.mjs      跨平台终端隐藏输入
 │   ├── config.mjs            查找项目、合并配置、匹配凭据
 │   ├── images.mjs            调用 Image API、读取 PNG
 │   └── output.mjs            管理输出文件、处理并发和重名
 └── references/
-    └── configuration.md      配置示例和优先级
+    ├── configuration.md      配置示例和优先级
+    └── setup.md              Agent 交互式初始化流程
 tests/                        配置和命令行端到端测试
 ```

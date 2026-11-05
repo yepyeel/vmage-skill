@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { text } from 'node:stream/consumers';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { saveCredential } from '../skills/vmage/scripts/credentials.mjs';
 import { generateImage } from '../skills/vmage/scripts/images.mjs';
 import { writeGeneration } from '../skills/vmage/scripts/output.mjs';
 import { workspace, writeJson } from './workspace.mjs';
@@ -193,4 +194,24 @@ test('a competing writer keeps its file and the completed image can be recovered
   }), /取回图片/);
   assert.equal(await readFile(path, 'utf8'), 'another writer');
   assert.deepEqual(await readFile(join(w.root, '.result.png.vmage-part')), Buffer.from(png, 'base64'));
+});
+
+
+test('generation uses persistent credentials without an environment key and never reports them', async t => {
+  const w = await workspace(t);
+  let authorization;
+  const baseUrl = await gateway(t, (req, res) => {
+    authorization = req.headers.authorization;
+    res.end(JSON.stringify({ data: [{ b64_json: png }] }));
+  });
+  await writeJson(w.globalFile, { baseUrl, model: 'test-model' });
+  saveCredential(join(dirname(w.globalFile), 'credentials.json'),
+    { baseUrl, apiKeyEnv: 'VMAGE_API_KEY' }, 'persistent-test-key');
+  const result = await run(w, ['--prompt', 'test', '--out', 'persistent.png']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(authorization, 'Bearer persistent-test-key');
+  assert.equal((result.stdout + result.stderr).includes('persistent-test-key'), false);
+  assert.deepEqual(await readFile(JSON.parse(result.stdout).path), Buffer.from(png, 'base64'));
+  const info = await run(w, ['--show-config']);
+  assert.equal(info.stdout.includes('persistent-test-key'), false);
 });

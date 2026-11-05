@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { readCredentials } from './credentials.mjs';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -33,14 +34,14 @@ function defaultKeyEnv(baseUrl) {
   return baseUrl === OFFICIAL_URL ? 'OPENAI_API_KEY' : 'VMAGE_API_KEY';
 }
 
-function validateSettings(input, source) {
+export function validateSettings(input, source) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error(`${source} 需要是 JSON 对象。`);
   }
   const result = {};
   for (const [field, value] of Object.entries(input)) {
     if (field === 'apiKey') throw new Error(`${source} 请用 apiKeyEnv 指定保存密钥的环境变量名。`);
-    if (!fields.has(field)) throw new Error(`${source} 含有未知配置项 ${field}。`);
+    if (!fields.has(field)) throw new Error(`${source} 含有未知配置项。`);
     if (typeof value !== 'string' || !value.trim()) {
       throw new Error(`${source} 的 ${field} 需要是非空字符串。`);
     }
@@ -59,7 +60,7 @@ function validateSettings(input, source) {
   return result;
 }
 
-async function readConfig(path) {
+export async function readConfig(path) {
   let contents;
   try {
     contents = await readFile(path, 'utf8');
@@ -88,13 +89,17 @@ async function findProject(cwd, home) {
   return { root: cwd };
 }
 
-export async function loadConfig({
-  cwd = process.cwd(), home = homedir(), env = process.env, overrides = {},
-} = {}) {
+export function globalConfigPath(home = homedir(), env = process.env) {
   // A relative XDG path would let the working project supply trusted global credentials.
   const configHome = env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME)
     ? env.XDG_CONFIG_HOME : join(home, '.config');
-  const globalPath = join(configHome, 'vmage', 'config.json');
+  return join(configHome, 'vmage', 'config.json');
+}
+
+export async function loadConfig({
+  cwd = process.cwd(), home = homedir(), env = process.env, overrides = {},
+} = {}) {
+  const globalPath = globalConfigPath(home, env);
   const [global, project] = await Promise.all([
     readConfig(globalPath), findProject(resolve(cwd), resolve(home)),
   ]);
@@ -110,6 +115,7 @@ export async function loadConfig({
 
   return {
     settings,
+    credentialsPath: join(dirname(globalPath), 'credentials.json'),
     projectRoot: project.root,
     projectConfig: project.path ?? null,
     globalConfig: global ? globalPath : null,
@@ -119,7 +125,7 @@ export async function loadConfig({
   };
 }
 
-export function resolveApiKey(config, env = process.env) {
+function validateEnvironmentBinding(config, env) {
   const { baseUrl, apiKeyEnv } = config.settings;
   if (apiKeyEnv === 'OPENAI_API_KEY') {
     if (baseUrl !== OFFICIAL_URL) {
@@ -134,7 +140,27 @@ export function resolveApiKey(config, env = process.env) {
       throw new Error(`请在 ${urlEnv} 或全局配置中把 ${apiKeyEnv} 绑定到当前 API 根地址。`);
     }
   }
+}
+
+export function resolveCredential(config, env = process.env) {
+  const { baseUrl, apiKeyEnv } = config.settings;
+  if (apiKeyEnv === 'OPENAI_API_KEY' && baseUrl !== OFFICIAL_URL) {
+    throw new Error('OPENAI_API_KEY 只用于 OpenAI 官方地址。请为网关配置独立的 Key。');
+  }
   const key = env[apiKeyEnv]?.trim();
-  if (!key) throw new Error(`缺少环境变量 ${apiKeyEnv}。请在启动 Agent 的环境中注入 API Key。`);
-  return key;
+  if (key) {
+    validateEnvironmentBinding(config, env);
+    return { key, source: 'environment' };
+  }
+  if (config.credentialsPath) {
+    const stored = readCredentials(config.credentialsPath).credentials.find(entry =>
+      entry.baseUrl === baseUrl && entry.apiKeyEnv === apiKeyEnv);
+    if (stored) return { key: stored.key, source: 'file' };
+  }
+  validateEnvironmentBinding(config, env);
+  throw new Error(`缺少环境变量 ${apiKeyEnv}，也未找到匹配的用户级密钥。请在自己的终端运行 setup.mjs --set-key，或配置环境变量。`);
+}
+
+export function resolveApiKey(config, env = process.env) {
+  return resolveCredential(config, env).key;
 }
