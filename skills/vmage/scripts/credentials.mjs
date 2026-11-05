@@ -24,8 +24,11 @@ $acl.AddAccessRule($rule)
 ` : ''}
 $stage = 'verify'
 $acl = Get-Acl -LiteralPath $p
+$stage = 'verify-owner'
 if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'owner' }
+$stage = 'verify-inheritance'
 if (-not $acl.AreAccessRulesProtected) { throw 'inheritance' }
+$stage = 'verify-access'
 $rules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
 foreach ($r in $rules) {
   if ($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Value -ne $sid.Value) { throw 'access' }
@@ -44,7 +47,7 @@ foreach ($r in $rules) {
         env: { ...process.env, VMAGE_CREDENTIAL_PATH: path }, stdio: ['ignore', 'ignore', 'pipe'], timeout: 15000,
       });
   } catch (error) {
-    const diagnostic = /VMAGE_ACL:(identity|protect|verify):(-?\d+)/.exec(String(error.stderr ?? ''));
+    const diagnostic = /VMAGE_ACL:(identity|protect|verify(?:-owner|-inheritance|-access)?):(-?\d+)/.exec(String(error.stderr ?? ''));
     const detail = diagnostic ? `（阶段 ${diagnostic[1]}，HRESULT ${diagnostic[2]}）` : '（PowerShell 启动或执行失败）';
     throw new Error(`无法设置或验证密钥文件的 Windows ACL${detail}；请使用支持 ACL 的本地文件系统，或改用环境变量。`);
   }
