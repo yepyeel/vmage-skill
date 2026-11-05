@@ -94,3 +94,26 @@ test('hidden input cancels on Ctrl+C / EOF, rejects pipes, and restores raw mode
   }
   await assert.rejects(readSecret(new PassThrough(), new PassThrough()), /交互式终端/);
 });
+
+test('Windows ACL diagnostics expose only fixed stages and numeric codes, never raw errors', async t => {
+  const { windowsAcl } = await import('../skills/vmage/scripts/credentials.mjs');
+  const original = process.env.SystemRoot;
+  process.env.SystemRoot = original ?? '/windows-test';
+  t.after(() => {
+    if (original === undefined) delete process.env.SystemRoot;
+    else process.env.SystemRoot = original;
+  });
+  const fail = (_command, args) => {
+    assert.equal(args.includes('-EncodedCommand'), true);
+    const error = new Error('sensitive raw exception');
+    error.stderr = Buffer.from('sensitive raw output\nVMAGE_ACL:protect:-2147024891\n');
+    throw error;
+  };
+  assert.throws(() => windowsAcl('/test credential', true, fail), error =>
+    error.message.includes('protect') && error.message.includes('-2147024891') && !error.message.includes('sensitive'));
+  assert.throws(() => windowsAcl('/test credential', false, () => {
+    const error = new Error('sensitive startup error');
+    error.stderr = Buffer.from('sensitive unstructured output');
+    throw error;
+  }), error => error.message.includes('PowerShell') && !error.message.includes('sensitive'));
+});

@@ -4,19 +4,25 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 
 // No secret is passed to PowerShell: it only receives a path and manages its ACL.
-function windowsAcl(path, protect) {
+export function windowsAcl(path, protect, execute = execFileSync) {
   const script = `
 $ErrorActionPreference = 'Stop'
+$stage = 'identity'
+try {
 $p = $env:VMAGE_CREDENTIAL_PATH
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 ${protect ? `
+$stage = 'protect'
 $acl = New-Object System.Security.AccessControl.FileSecurity
 $acl.SetOwner($sid)
 $acl.SetAccessRuleProtection($true, $false)
 $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $p -AclObject $acl
+# Persist only the owner/access sections modified above. Set-Acl can attempt
+# to write additional security descriptor sections requiring extra privileges.
+[System.IO.File]::SetAccessControl($p, $acl)
 ` : ''}
+$stage = 'verify'
 $acl = Get-Acl -LiteralPath $p
 if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'owner' }
 if (-not $acl.AreAccessRulesProtected) { throw 'inheritance' }
@@ -24,16 +30,23 @@ $rules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityId
 foreach ($r in $rules) {
   if ($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Value -ne $sid.Value) { throw 'access' }
 }
+} catch {
+  # Fixed stage + numeric HRESULT only; never emit exception text or file contents.
+  [Console]::Error.WriteLine(('VMAGE_ACL:{0}:{1}' -f $stage, $_.Exception.HResult))
+  exit 1
+}
 `;
   try {
     const root = process.env.SystemRoot ?? process.env.SYSTEMROOT;
     if (!root) throw new Error('Windows directory unavailable');
-    execFileSync(join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-Command', script], {
-        env: { ...process.env, VMAGE_CREDENTIAL_PATH: path }, stdio: 'ignore', timeout: 15000,
+    execute(join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+        env: { ...process.env, VMAGE_CREDENTIAL_PATH: path }, stdio: ['ignore', 'ignore', 'pipe'], timeout: 15000,
       });
-  } catch {
-    throw new Error('无法设置或验证密钥文件的 Windows ACL；请使用支持 ACL 的本地文件系统，或改用环境变量。');
+  } catch (error) {
+    const diagnostic = /VMAGE_ACL:(identity|protect|verify):(-?\d+)/.exec(String(error.stderr ?? ''));
+    const detail = diagnostic ? `（阶段 ${diagnostic[1]}，HRESULT ${diagnostic[2]}）` : '（PowerShell 启动或执行失败）';
+    throw new Error(`无法设置或验证密钥文件的 Windows ACL${detail}；请使用支持 ACL 的本地文件系统，或改用环境变量。`);
   }
 }
 
