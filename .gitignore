@@ -1,0 +1,4 @@
+/output/vmage/
+*.vmage-part
+.env
+.DS_Store

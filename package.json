@@ -1,0 +1,8 @@
+{
+  "name": "vmage-skill",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A portable GPT Image skill for Codex and Claude Code",
+  "engines": { "node": ">=22" },
+  "scripts": { "test": "node --test" }
+}
