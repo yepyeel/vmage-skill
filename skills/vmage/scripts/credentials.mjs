@@ -23,7 +23,8 @@ $acl.AddAccessRule($rule)
 [System.IO.File]::SetAccessControl($p, $acl)
 ` : ''}
 $stage = 'verify'
-$acl = Get-Acl -LiteralPath $p
+$sections = [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Access
+$acl = [System.IO.File]::GetAccessControl($p, $sections)
 $stage = 'verify-owner'
 if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'owner' }
 $stage = 'verify-inheritance'
